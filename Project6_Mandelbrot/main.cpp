@@ -25,7 +25,7 @@ using namespace std;
 const int MAX_WIDTH_HEIGHT = 30000;
 const int HUE_PER_ITERATION = 5;
 const bool DRAW_ON_KEY = true;
-const int WIDTH_HEIGHT = 28000;
+const int WIDTH_HEIGHT = 2000;
 const int ZOOM = 1000;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -58,14 +58,6 @@ public:
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-int getStart(int tasksRemaining, int chunkSize) {
-    return -1;
-}
-
-int getEnd(int tasksRemaining, int chunkSize) {
-    return -1;
-}
-
 float iterationsToEscape(double x, double y, int maxIterations) {
     double tempa;
     double a = 0;
@@ -94,7 +86,7 @@ int hue2rgb(float t){
     return 0;
 }
 
-void writeImage(unsigned char *img, int w, int h, int force) {
+void writeImage(unsigned char *img, int w, int h) {
     long long filesize = 54 + 3*(long long)w*(long long)h;
     unsigned char bmpfileheader[14] = {'B','M', 0,0,0,0, 0,0, 0,0, 54,0,0,0};
     unsigned char bmpinfoheader[40] = {40,0,0,0, 0,0,0,0, 0,0,0,0, 1,0, 24,0};
@@ -114,31 +106,28 @@ void writeImage(unsigned char *img, int w, int h, int force) {
     bmpinfoheader[10] = (unsigned char)(       h>>16);
     bmpinfoheader[11] = (unsigned char)(       h>>24);
     
-    if (force) {
-        fprintf(stderr, "WRITING IMAGE TO FILE\n");
-        
-        FILE *f;
-        f = fopen("temp.bmp","wb");
-        fwrite(bmpfileheader,1,14,f);
-        fwrite(bmpinfoheader,1,40,f);
-        
-        for (int i=0; i<h; i++) {
-            long long offset = ((long long)w*(h-i-1)*3);
-            fwrite(img+offset,3,w,f);
-            fwrite(bmppad,1,(4-(w*3)%4)%4,f);
-        }
-        
-        fclose(f);
-    } else {
-        fprintf(stderr, "FAILED TO WRITE IMAGE TO DISK.\n");
+    fprintf(stderr, "WRITING IMAGE\n");
+    
+    FILE *f;
+    
+    f = fopen("temp.bmp","wb");
+    fwrite(bmpfileheader,1,14,f);
+    fwrite(bmpinfoheader,1,40,f);
+    
+    for (int i=0; i<h; i++) {
+        long long offset = ((long long)w*(h-i-1)*3);
+        fwrite(img+offset,3,w,f);
+        fwrite(bmppad,1,(4-(w*3)%4)%4,f);
     }
+    
+    fclose(f);
 }
 
 void sendWork(int chunkNumber, double xs[MAX_WIDTH_HEIGHT], double ys[MAX_WIDTH_HEIGHT], unsigned char *img, int destination) {
     MPI_Request request;
     MPI_Isend(xs, 1, MPI_DOUBLE, destination, 0, MPI_COMM_WORLD, &request);
     MPI_Isend(ys, 1, MPI_DOUBLE, destination, 1, MPI_COMM_WORLD, &request);
-    MPI_Isend(img, 1, MPI_UNSIGNED_CHAR, destination, 2, MPI_COMM_WORLD, &request);
+    MPI_Isend(&img, 1, MPI_UNSIGNED_CHAR, destination, 2, MPI_COMM_WORLD, &request);
     MPI_Isend(&chunkNumber, 1, MPI_INT, destination, 3, MPI_COMM_WORLD, &request);
 }
 
@@ -185,13 +174,16 @@ unsigned char *createImage(State state, int argc, char *argv[]) {
     while (responseChunks < CHUNK_NUMBER_TOTAL) {
         if (iproc == 0) {
             fprintf(stderr, "%i: AWAITING RESPONSE FROM ANYSOURCE\n", iproc);
+            
+            // Setup temporary variables.
             double newXS[MAX_WIDTH_HEIGHT], newYS[MAX_WIDTH_HEIGHT];
             unsigned char *newImg = NULL;
             if (newImg) free(newImg);
             newImg = (unsigned char *)malloc(size);
-            
             int nodeStartNumber;
             int nodeEndNumber;
+            
+            // Wait for response from node.
             MPI_Recv(newXS, 1, MPI_DOUBLE, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
             MPI_Recv(newYS, 1, MPI_DOUBLE, status.MPI_SOURCE, 1, MPI_COMM_WORLD, &status);
             MPI_Recv(&newImg, 1, MPI_UNSIGNED_CHAR, status.MPI_SOURCE, 2, MPI_COMM_WORLD, &status);
@@ -218,6 +210,8 @@ unsigned char *createImage(State state, int argc, char *argv[]) {
                 }
             }
             
+            writeImage(img, WIDTH_HEIGHT, WIDTH_HEIGHT);
+            
             
             if (chunksSent < CHUNK_NUMBER_TOTAL) {
                 sendWork(chunksSent, xs, ys, img, status.MPI_SOURCE);
@@ -233,7 +227,6 @@ unsigned char *createImage(State state, int argc, char *argv[]) {
             MPI_Recv(&img, 1, MPI_UNSIGNED_CHAR, 0, 2, MPI_COMM_WORLD, &status);
             MPI_Recv(&chunksSent, 1, MPI_INT, 0, 3, MPI_COMM_WORLD, &status);
             fprintf(stderr, "%i: RECEIVED WORK, CHUNK #: %i\n", iproc, chunksSent);
-            fprintf(stderr, "%i: 0x - SIZE OF IMG FILE: %lu\n", iproc, sizeof(img) / sizeof(unsigned char *));
             
             int start = chunksSent * CHUNK_SIZE;
             int end = start + CHUNK_SIZE;
@@ -267,11 +260,12 @@ unsigned char *createImage(State state, int argc, char *argv[]) {
                 }
             }
             
-            fprintf(stderr, "%i: 1x - SIZE OF IMG FILE: %lu\n", iproc, sizeof(img) / sizeof(unsigned char *));
+//            writeImage(img, WIDTH_HEIGHT, WIDTH_HEIGHT, chunksSent);
+            
             fprintf(stderr, "%i: FINSIHED WORK FOR CHUNK #: %i\n", iproc, chunksSent);
             MPI_Send(xs, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
             MPI_Send(ys, 1, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD);
-            MPI_Send(img, 1, MPI_UNSIGNED_CHAR, 0, 2, MPI_COMM_WORLD);
+            MPI_Send(&img, 1, MPI_UNSIGNED_CHAR, 0, 2, MPI_COMM_WORLD);
             MPI_Send(&chunksSent, 1, MPI_INT, 0, 3, MPI_COMM_WORLD);
             MPI_Recv(&responseChunks, 1, MPI_INT, 0, STATUS_CHECK_TAG, MPI_COMM_WORLD, &status);
             
@@ -292,7 +286,7 @@ unsigned char *createImage(State state, int argc, char *argv[]) {
 
 void draw(State state, int argc, char *argv[]) {
     unsigned char *img = createImage(state, argc, argv);
-    writeImage(img, state.w, state.h, 0);
+//    writeImage(img, state.w, state.h, 0);
 }
 
 double When()
