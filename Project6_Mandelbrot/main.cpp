@@ -15,7 +15,6 @@
 #include <math.h>
 #include <sys/time.h>
 #include "mpi.h"
-#include <vector>
 
 using namespace std;
 
@@ -31,8 +30,9 @@ const int ZOOM = 1000;
 ////////////////////////////////////////////////////////////////////////////////
 
 /* MPI CONSTS */
-const int CHUNK_SIZE = 2000;
+const int CHUNK_SIZE = 1000;
 const int CHUNK_NUMBER_TOTAL = WIDTH_HEIGHT / CHUNK_SIZE;
+const int STATUS_CHECK_TAG = 100;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -139,7 +139,7 @@ unsigned char *createImage(State state, int argc, char *argv[]) {
     int iproc, nproc;
     int w = state.w;
     int h = state.h;
-    int chunkNumber = 0;
+    int chunksSent = 0;
     int responseChunks = 0;
     
     if (w > MAX_WIDTH_HEIGHT) w = MAX_WIDTH_HEIGHT;
@@ -167,15 +167,15 @@ unsigned char *createImage(State state, int argc, char *argv[]) {
         int i;
         
         for (i = 1; i < nproc; i++) {
-            if (chunkNumber < CHUNK_NUMBER_TOTAL) {
-                sendWork(chunkNumber, xs, ys, img, i);
-                chunkNumber++;
-                fprintf(stderr, "%i: WORK SENT TO: %i\n", iproc, i);
+            if (chunksSent < CHUNK_NUMBER_TOTAL) {
+                sendWork(chunksSent, xs, ys, img, i);
+                fprintf(stderr, "%i: WORK(%i) SENT TO: %i\n", iproc, chunksSent,i);
+                chunksSent++;
             }
         }
     }
     
-    while (responseChunks < CHUNK_NUMBER_TOTAL - 1) {
+    while (responseChunks < CHUNK_NUMBER_TOTAL) {
         if (iproc == 0) {
             fprintf(stderr, "%i: AWAITING RESPONSE FROM ANYSOURCE\n", iproc);
             double newXS[MAX_WIDTH_HEIGHT], newYS[MAX_WIDTH_HEIGHT];
@@ -186,27 +186,29 @@ unsigned char *createImage(State state, int argc, char *argv[]) {
 //            MPI_Recv(newYS, 1, MPI_DOUBLE, status.MPI_SOURCE, 1, MPI_COMM_WORLD, &status);
 //            MPI_Recv(newImg, 1, MPI_CHAR, status.MPI_SOURCE, 2, MPI_COMM_WORLD, &status);
             MPI_Recv(&newChunkNumber, 1, MPI_INT, MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, &status);
-            MPI_Send(&chunkNumber - 1, 1, MPI_INT, status.MPI_SOURCE, 100, MPI_COMM_WORLD);
+            MPI_Send(&chunksSent, 1, MPI_INT, status.MPI_SOURCE, STATUS_CHECK_TAG, MPI_COMM_WORLD);
+            responseChunks++;
             
-            fprintf(stderr, "%i: RESPONSE FROM: %i (%i/%i)\n", iproc, status.MPI_SOURCE, newChunkNumber + 1, chunkNumber);
+            fprintf(stderr, "%i: RESPONSE FROM: %i (%i/%i)\n", iproc, status.MPI_SOURCE, newChunkNumber + 1, chunksSent);
             
             // TODO: INCORPORATE UPDATES!!
             
-            if (chunkNumber < CHUNK_NUMBER_TOTAL) {
-                sendWork(chunkNumber, xs, ys, img, status.MPI_SOURCE);
-                fprintf(stderr, "%i: WORK(%i) SENT TO: %i\n", iproc, chunkNumber, status.MPI_SOURCE);
-                responseChunks++;
-                chunkNumber++;
+            if (chunksSent < CHUNK_NUMBER_TOTAL) {
+                sendWork(chunksSent, xs, ys, img, status.MPI_SOURCE);
+                fprintf(stderr, "%i: WORK(%i) SENT TO: %i\n", iproc, chunksSent, status.MPI_SOURCE);
+                chunksSent++;
+                
+                fprintf(stderr, "%i: CURRENT STATUS --> RESPONSE_CHUNKS: %i, CHUNKS_SENT: %i\n", iproc, responseChunks, chunksSent);
             }
         } else {
             fprintf(stderr, "%i: AWAITING WORK FROM 0\n", iproc);
 //            MPI_Recv(xs, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD, &status);
 //            MPI_Recv(ys, 1, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD, &status);
 //            MPI_Recv(img, 1, MPI_CHAR, 0, 2, MPI_COMM_WORLD, &status);
-            MPI_Recv(&chunkNumber, 1, MPI_INT, 0, 3, MPI_COMM_WORLD, &status);
-            fprintf(stderr, "%i: RECEIVED WORK, CHUNK #: %i\n", iproc, chunkNumber);
+            MPI_Recv(&chunksSent, 1, MPI_INT, 0, 3, MPI_COMM_WORLD, &status);
+            fprintf(stderr, "%i: RECEIVED WORK, CHUNK #: %i\n", iproc, chunksSent);
             
-            int start = chunkNumber * CHUNK_SIZE;
+            int start = chunksSent * CHUNK_SIZE;
             int end = start + CHUNK_SIZE;
             int px;
             
@@ -238,18 +240,19 @@ unsigned char *createImage(State state, int argc, char *argv[]) {
                 }
             }
             
-            fprintf(stderr, "%i: RESPONDING TO WORK REQUEST\n", iproc);
+            fprintf(stderr, "%i: FINSIHED WORK FOR CHUNK #: %i\n", iproc, chunksSent);
 //            MPI_Send(xs, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
 //            MPI_Send(ys, 1, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD);
 //            MPI_Send(img, 1, MPI_CHAR, 0, 2, MPI_COMM_WORLD);
-            MPI_Send(&chunkNumber, 1, MPI_INT, 0, 3, MPI_COMM_WORLD);
-            MPI_Recv(&responseChunks, 1, MPI_INT, 0, 100, MPI_COMM_WORLD, &status);
-            string responseString = responseChunks < CHUNK_NUMBER_TOTAL - 1 ? "CONTINUING" : "QUITTING";
-            fprintf(stderr, "%i: ---> RESPONSE CHUNK RECEIVED: %i, %s", iproc, responseChunks, responseString.c_str());
+            MPI_Send(&chunksSent, 1, MPI_INT, 0, 3, MPI_COMM_WORLD);
+            MPI_Recv(&responseChunks, 1, MPI_INT, 0, STATUS_CHECK_TAG, MPI_COMM_WORLD, &status);
+            
+            fprintf(stderr, "%i: ---> RESPONSE CHUNK RECEIVED: %i, %i\n", iproc, responseChunks, CHUNK_NUMBER_TOTAL);
         }
     }
     
-    fprintf(stderr, "EXECUTION COMPLETE!\n");
+    fprintf(stderr, "%i: EXECUTION COMPLETE, EXITING!\n", iproc);
+    
     MPI_Finalize();
     
     return img;
