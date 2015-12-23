@@ -25,13 +25,13 @@ using namespace std;
 const int MAX_WIDTH_HEIGHT = 30000;
 const int HUE_PER_ITERATION = 5;
 const bool DRAW_ON_KEY = true;
-const int WIDTH_HEIGHT = 2000;
+const int WIDTH_HEIGHT = 1000;
 const int ZOOM = 1000;
 
 ////////////////////////////////////////////////////////////////////////////////
 
 /* MPI CONSTS */
-const int CHUNK_SIZE = 1000;
+const int CHUNK_SIZE = 100;
 const int CHUNK_NUMBER_TOTAL = WIDTH_HEIGHT / CHUNK_SIZE;
 const int STATUS_CHECK_TAG = 100;
 
@@ -58,6 +58,13 @@ public:
 };
 
 ////////////////////////////////////////////////////////////////////////////////
+double When()
+{
+    struct timeval tp;
+    gettimeofday(&tp, NULL);
+    return ((double) tp.tv_sec + (double) tp.tv_usec * 1e-6);
+}
+
 float iterationsToEscape(double x, double y, int maxIterations) {
     double tempa;
     double a = 0;
@@ -106,10 +113,9 @@ void writeImage(unsigned char *img, int w, int h) {
     bmpinfoheader[10] = (unsigned char)(       h>>16);
     bmpinfoheader[11] = (unsigned char)(       h>>24);
     
-    fprintf(stderr, "WRITING IMAGE\n");
+    fprintf(stderr, "WRITING IMAGE TO FILE\n");
     
     FILE *f;
-    
     f = fopen("temp.bmp","wb");
     fwrite(bmpfileheader,1,14,f);
     fwrite(bmpinfoheader,1,40,f);
@@ -123,6 +129,7 @@ void writeImage(unsigned char *img, int w, int h) {
     fclose(f);
 }
 
+// This method sends asynchronous work requests.
 void sendWork(int chunkNumber, double xs[MAX_WIDTH_HEIGHT], double ys[MAX_WIDTH_HEIGHT], unsigned char *img, int destination) {
     MPI_Request request;
     MPI_Isend(xs, 1, MPI_DOUBLE, destination, 0, MPI_COMM_WORLD, &request);
@@ -131,7 +138,7 @@ void sendWork(int chunkNumber, double xs[MAX_WIDTH_HEIGHT], double ys[MAX_WIDTH_
     MPI_Isend(&chunkNumber, 1, MPI_INT, destination, 3, MPI_COMM_WORLD, &request);
 }
 
-unsigned char *createImage(State state, int argc, char *argv[]) {
+double createImage(State state, int argc, char *argv[], double startTime) {
     int iproc, nproc;
     int w = state.w;
     int h = state.h;
@@ -189,6 +196,8 @@ unsigned char *createImage(State state, int argc, char *argv[]) {
             MPI_Recv(&newImg, 1, MPI_UNSIGNED_CHAR, status.MPI_SOURCE, 2, MPI_COMM_WORLD, &status);
             MPI_Recv(&nodeStartNumber, 1, MPI_INT, status.MPI_SOURCE, 3, MPI_COMM_WORLD, &status);
             MPI_Send(&chunksSent, 1, MPI_INT, status.MPI_SOURCE, STATUS_CHECK_TAG, MPI_COMM_WORLD);
+            
+            // Received another finished chunk of the image.
             responseChunks++;
             
             fprintf(stderr, "%i: RESPONSE FROM: %i (%i/%i)\n", iproc, status.MPI_SOURCE, nodeStartNumber + 1, chunksSent);
@@ -196,9 +205,8 @@ unsigned char *createImage(State state, int argc, char *argv[]) {
             nodeStartNumber = nodeStartNumber * CHUNK_SIZE;
             nodeEndNumber = nodeStartNumber + CHUNK_SIZE - 1;
             
-            fprintf(stderr, "%i: START VALUE: %i || END VALUE: %i\n", iproc, nodeStartNumber, nodeEndNumber);
-            
             // Update master 'img' variable.
+            
             int i, j;
             for (i = nodeStartNumber; i < nodeEndNumber; i++) {
                 for (j = 0; j < WIDTH_HEIGHT; j++) {
@@ -260,9 +268,8 @@ unsigned char *createImage(State state, int argc, char *argv[]) {
                 }
             }
             
-//            writeImage(img, WIDTH_HEIGHT, WIDTH_HEIGHT, chunksSent);
+            fprintf(stderr, "%i: FINISHED WORK FOR CHUNK #: %i\n", iproc, chunksSent);
             
-            fprintf(stderr, "%i: FINSIHED WORK FOR CHUNK #: %i\n", iproc, chunksSent);
             MPI_Send(xs, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
             MPI_Send(ys, 1, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD);
             MPI_Send(&img, 1, MPI_UNSIGNED_CHAR, 0, 2, MPI_COMM_WORLD);
@@ -279,31 +286,30 @@ unsigned char *createImage(State state, int argc, char *argv[]) {
     
     fprintf(stderr, "%i: ------------------------------ RETURNING! ------------------------------\n", iproc);
     
-    return img;
+    if (iproc == 0) {
+        double endTime = When();
+        writeImage(img, WIDTH_HEIGHT, WIDTH_HEIGHT);
+        return endTime - startTime;
+    }
+    
+    return -startTime;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-
-void draw(State state, int argc, char *argv[]) {
-    unsigned char *img = createImage(state, argc, argv);
-//    writeImage(img, state.w, state.h, 0);
-}
-
-double When()
-{
-    struct timeval tp;
-    gettimeofday(&tp, NULL);
-    return ((double) tp.tv_sec + (double) tp.tv_usec * 1e-6);
+double draw(State state, int argc, char *argv[]) {
+    double startTime = When();
+    double endTime = createImage(state, argc, argv, startTime);
+    
+    return endTime - startTime;
 }
 
 int main(int argc, char *argv[]) {
     State state;
-    double startTime = When();
-    draw(state, argc, argv);
-    double endTime = When();
+    double totalTime = draw(state, argc, argv);
     
-    double totalTime = endTime - startTime;
-    fprintf(stderr, "TOTAL TIME: %f\n", totalTime);
+    if (totalTime > 0) {
+        fprintf(stderr, "TOTAL TIME: %f\n", totalTime);
+    }
     
     return 0;
 }
