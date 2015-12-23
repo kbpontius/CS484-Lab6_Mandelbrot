@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <sys/time.h>
 #include "mpi.h"
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -20,8 +21,9 @@
 const int MAX_WIDTH_HEIGHT = 30000;
 const int HUE_PER_ITERATION = 5;
 const bool DRAW_ON_KEY = true;
-const int WIDTH_HEIGHT = 8000;
+const int WIDTH_HEIGHT = 4000;
 const int ZOOM = 1000;
+const int ROW_WORK_CHUNK_SIZE = WIDTH_HEIGHT / 100;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -164,7 +166,19 @@ void draw(State state) {
     writeImage(img, state.w, state.h);
 }
 
+double When()
+{
+    struct timeval tp;
+    gettimeofday(&tp, NULL);
+    return ((double) tp.tv_sec + (double) tp.tv_usec * 1e-6);
+}
+
 int main() {
     State state;
+    double startTime = When();
     draw(state);
+    double endTime = When();
+    
+    double totalTime = endTime - startTime;
+    fprintf(stderr, "TOTAL TIME: %f\n", totalTime);
 }
