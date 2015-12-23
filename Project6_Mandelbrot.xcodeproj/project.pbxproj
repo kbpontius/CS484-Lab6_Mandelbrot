@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		271E51F51C2A2AAC00DB5AEC /* main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 271E51F41C2A2AAC00DB5AEC /* main.cpp */; };
+		271E51FD1C2A2B3A00DB5AEC /* libmpi_cxx.1.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 271E51FB1C2A2B3A00DB5AEC /* libmpi_cxx.1.dylib */; };
+		271E51FE1C2A2B3A00DB5AEC /* libmpi.12.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 271E51FC1C2A2B3A00DB5AEC /* libmpi.12.dylib */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -25,6 +27,8 @@
 /* Begin PBXFileReference section */
 		271E51F11C2A2AAC00DB5AEC /* Project6_Mandelbrot */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = Project6_Mandelbrot; sourceTree = BUILT_PRODUCTS_DIR; };
 		271E51F41C2A2AAC00DB5AEC /* main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = main.cpp; sourceTree = "<group>"; };
+		271E51FB1C2A2B3A00DB5AEC /* libmpi_cxx.1.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libmpi_cxx.1.dylib; path = "../../../../../../../../../usr/local/Cellar/open-mpi/1.10.1/lib/libmpi_cxx.1.dylib"; sourceTree = "<group>"; };
+		271E51FC1C2A2B3A00DB5AEC /* libmpi.12.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libmpi.12.dylib; path = "../../../../../../../../../usr/local/Cellar/open-mpi/1.10.1/lib/libmpi.12.dylib"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -32,6 +36,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				271E51FD1C2A2B3A00DB5AEC /* libmpi_cxx.1.dylib in Frameworks */,
+				271E51FE1C2A2B3A00DB5AEC /* libmpi.12.dylib in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -41,6 +47,8 @@
 		271E51E81C2A2AAC00DB5AEC = {
 			isa = PBXGroup;
 			children = (
+				271E51FB1C2A2B3A00DB5AEC /* libmpi_cxx.1.dylib */,
+				271E51FC1C2A2B3A00DB5AEC /* libmpi.12.dylib */,
 				271E51F31C2A2AAC00DB5AEC /* Project6_Mandelbrot */,
 				271E51F21C2A2AAC00DB5AEC /* Products */,
 			);
@@ -207,14 +215,24 @@
 		271E51F91C2A2AAC00DB5AEC /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				LIBRARY_SEARCH_PATHS = (
+					/usr/local/lib,
+					"/usr/local/Cellar/open-mpi/1.10.1/lib",
+				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				USER_HEADER_SEARCH_PATHS = /usr/local/include;
 			};
 			name = Debug;
 		};
 		271E51FA1C2A2AAC00DB5AEC /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				LIBRARY_SEARCH_PATHS = (
+					/usr/local/lib,
+					"/usr/local/Cellar/open-mpi/1.10.1/lib",
+				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				USER_HEADER_SEARCH_PATHS = /usr/local/include;
 			};
 			name = Release;
 		};
