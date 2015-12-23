@@ -15,15 +15,24 @@
 #include <math.h>
 #include <sys/time.h>
 #include "mpi.h"
+#include <vector>
+
+using namespace std;
 
 ////////////////////////////////////////////////////////////////////////////////
 
+/* MANDELBROT CONSTS */
 const int MAX_WIDTH_HEIGHT = 30000;
 const int HUE_PER_ITERATION = 5;
 const bool DRAW_ON_KEY = true;
 const int WIDTH_HEIGHT = 4000;
 const int ZOOM = 1000;
-const int ROW_WORK_CHUNK_SIZE = WIDTH_HEIGHT / 100;
+
+////////////////////////////////////////////////////////////////////////////////
+
+/* MPI CONSTS */
+const int CHUNK_SIZE = 2000;
+const int CHUNK_NUMBER_TOTAL = WIDTH_HEIGHT / CHUNK_SIZE;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -48,6 +57,21 @@ public:
 };
 
 ////////////////////////////////////////////////////////////////////////////////
+void sendWork(int chunkNumber, double xs[MAX_WIDTH_HEIGHT], double ys[MAX_WIDTH_HEIGHT], unsigned char *img, int destination) {
+    MPI_Request request;
+//    MPI_Isend(xs, 1, MPI_DOUBLE, destination, 0, MPI_COMM_WORLD, &request);
+//    MPI_Isend(ys, 1, MPI_DOUBLE, destination, 1, MPI_COMM_WORLD, &request);
+//    MPI_Isend(img, 1, MPI_CHAR, destination, 2, MPI_COMM_WORLD, &request);
+    MPI_Isend(&chunkNumber, 1, MPI_INT, destination, 3, MPI_COMM_WORLD, &request);
+}
+
+int getStart(int tasksRemaining, int chunkSize) {
+    return -1;
+}
+
+int getEnd(int tasksRemaining, int chunkSize) {
+    return -1;
+}
 
 float iterationsToEscape(double x, double y, int maxIterations) {
     double tempa;
@@ -111,9 +135,12 @@ void writeImage(unsigned char *img, int w, int h) {
     fclose(f);
 }
 
-unsigned char *createImage(State state) {
+unsigned char *createImage(State state, int argc, char *argv[]) {
+    int iproc, nproc;
     int w = state.w;
     int h = state.h;
+    int chunkNumber = 0;
+    int responseChunks = 0;
     
     if (w > MAX_WIDTH_HEIGHT) w = MAX_WIDTH_HEIGHT;
     if (h > MAX_WIDTH_HEIGHT) h = MAX_WIDTH_HEIGHT;
@@ -124,45 +151,114 @@ unsigned char *createImage(State state) {
     if (img) free(img);
     
     long long size = (long long)w*(long long)h*3;
-    printf("Malloc w %zu, h %zu,  %zu\n", w, h, size);
+//    printf("Malloc w %zu, h %zu, %zu\n", w, h, size);
     img = (unsigned char *)malloc(size);
-    printf("malloc returned %X\n", img);
+//    printf("malloc returned %X\n", img);
     
     double xs[MAX_WIDTH_HEIGHT], ys[MAX_WIDTH_HEIGHT];
     
-    for (int px=0; px<w; px++) {
-        xs[px] = (px - w/2)/state.zoom + state.centerX;
-    }
+    MPI_Status status;
+    MPI_Init(&argc, &argv);
     
-    for (int py=0; py<h; py++) {
-        ys[py] = (py - h/2)/state.zoom + state.centerY;
-    }
+    MPI_Comm_size(MPI_COMM_WORLD, &nproc);
+    MPI_Comm_rank(MPI_COMM_WORLD, &iproc);
     
-    for (int px=0; px<w; px++) {
-        for (int py=0; py<h; py++) {
-            r = g = b = 0;
-            float iterations = iterationsToEscape(xs[px], ys[py], state.maxIterations);
-            
-            if (iterations != -1) {
-                float h = HUE_PER_ITERATION * iterations;
-                r = hue2rgb(h + 120);
-                g = hue2rgb(h);
-                b = hue2rgb(h + 240);
+    if (iproc == 0) {
+        int i;
+        
+        for (i = 1; i < nproc; i++) {
+            if (chunkNumber < CHUNK_NUMBER_TOTAL) {
+                sendWork(chunkNumber, xs, ys, img, i);
+                chunkNumber++;
+                fprintf(stderr, "%i: WORK SENT TO: %i\n", iproc, i);
             }
-            
-            long long loc = ((long long)px+(long long)py*(long long)w)*3;
-            img[loc+2] = (unsigned char)(r);
-            img[loc+1] = (unsigned char)(g);
-            img[loc+0] = (unsigned char)(b);
         }
     }
+    
+    while (responseChunks < CHUNK_NUMBER_TOTAL - 1) {
+        if (iproc == 0) {
+            fprintf(stderr, "%i: AWAITING RESPONSE FROM ANYSOURCE\n", iproc);
+            double newXS[MAX_WIDTH_HEIGHT], newYS[MAX_WIDTH_HEIGHT];
+            unsigned char *newImg = NULL;
+            if (newImg) free(newImg);
+            int newChunkNumber;
+//            MPI_Recv(newXS, 1, MPI_DOUBLE, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
+//            MPI_Recv(newYS, 1, MPI_DOUBLE, status.MPI_SOURCE, 1, MPI_COMM_WORLD, &status);
+//            MPI_Recv(newImg, 1, MPI_CHAR, status.MPI_SOURCE, 2, MPI_COMM_WORLD, &status);
+            MPI_Recv(&newChunkNumber, 1, MPI_INT, MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, &status);
+            MPI_Send(&chunkNumber - 1, 1, MPI_INT, status.MPI_SOURCE, 100, MPI_COMM_WORLD);
+            
+            fprintf(stderr, "%i: RESPONSE FROM: %i (%i/%i)\n", iproc, status.MPI_SOURCE, newChunkNumber + 1, chunkNumber);
+            
+            // TODO: INCORPORATE UPDATES!!
+            
+            if (chunkNumber < CHUNK_NUMBER_TOTAL) {
+                sendWork(chunkNumber, xs, ys, img, status.MPI_SOURCE);
+                fprintf(stderr, "%i: WORK(%i) SENT TO: %i\n", iproc, chunkNumber, status.MPI_SOURCE);
+                responseChunks++;
+                chunkNumber++;
+            }
+        } else {
+            fprintf(stderr, "%i: AWAITING WORK FROM 0\n", iproc);
+//            MPI_Recv(xs, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD, &status);
+//            MPI_Recv(ys, 1, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD, &status);
+//            MPI_Recv(img, 1, MPI_CHAR, 0, 2, MPI_COMM_WORLD, &status);
+            MPI_Recv(&chunkNumber, 1, MPI_INT, 0, 3, MPI_COMM_WORLD, &status);
+            fprintf(stderr, "%i: RECEIVED WORK, CHUNK #: %i\n", iproc, chunkNumber);
+            
+            int start = chunkNumber * CHUNK_SIZE;
+            int end = start + CHUNK_SIZE;
+            int px;
+            
+            for (px = start; px < end; px++) {
+                xs[px] = (px - w/2)/state.zoom + state.centerX;
+            }
+            
+            int py;
+            for (py = start; py < end; py++) {
+                ys[py] = (py - h/2)/state.zoom + state.centerY;
+            }
+            
+            for (px = start; px < end; px++) {
+                for (int py = start; py < end; py++) {
+                    r = g = b = 0;
+                    float iterations = iterationsToEscape(xs[px], ys[py], state.maxIterations);
+                    
+                    if (iterations != -1) {
+                        float h = HUE_PER_ITERATION * iterations;
+                        r = hue2rgb(h + 120);
+                        g = hue2rgb(h);
+                        b = hue2rgb(h + 240);
+                    }
+                    
+                    long long loc = ((long long)px+(long long)py*(long long)w)*3;
+                    img[loc + 2] = (unsigned char)(r);
+                    img[loc + 1] = (unsigned char)(g);
+                    img[loc + 0] = (unsigned char)(b);
+                }
+            }
+            
+            fprintf(stderr, "%i: RESPONDING TO WORK REQUEST\n", iproc);
+//            MPI_Send(xs, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
+//            MPI_Send(ys, 1, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD);
+//            MPI_Send(img, 1, MPI_CHAR, 0, 2, MPI_COMM_WORLD);
+            MPI_Send(&chunkNumber, 1, MPI_INT, 0, 3, MPI_COMM_WORLD);
+            MPI_Recv(&responseChunks, 1, MPI_INT, 0, 100, MPI_COMM_WORLD, &status);
+            string responseString = responseChunks < CHUNK_NUMBER_TOTAL - 1 ? "CONTINUING" : "QUITTING";
+            fprintf(stderr, "%i: ---> RESPONSE CHUNK RECEIVED: %i, %s", iproc, responseChunks, responseString.c_str());
+        }
+    }
+    
+    fprintf(stderr, "EXECUTION COMPLETE!\n");
+    MPI_Finalize();
+    
     return img;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-void draw(State state) {
-    unsigned char *img = createImage(state);
+void draw(State state, int argc, char *argv[]) {
+    unsigned char *img = createImage(state, argc, argv);
     writeImage(img, state.w, state.h);
 }
 
@@ -173,12 +269,14 @@ double When()
     return ((double) tp.tv_sec + (double) tp.tv_usec * 1e-6);
 }
 
-int main() {
+int main(int argc, char *argv[]) {
     State state;
     double startTime = When();
-    draw(state);
+    draw(state, argc, argv);
     double endTime = When();
     
     double totalTime = endTime - startTime;
     fprintf(stderr, "TOTAL TIME: %f\n", totalTime);
+    
+    return 0;
 }
