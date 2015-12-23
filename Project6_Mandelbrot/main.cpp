@@ -57,14 +57,6 @@ public:
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-void sendWork(int chunkNumber, double xs[MAX_WIDTH_HEIGHT], double ys[MAX_WIDTH_HEIGHT], unsigned char *img, int destination) {
-    MPI_Request request;
-//    MPI_Isend(xs, 1, MPI_DOUBLE, destination, 0, MPI_COMM_WORLD, &request);
-//    MPI_Isend(ys, 1, MPI_DOUBLE, destination, 1, MPI_COMM_WORLD, &request);
-//    MPI_Isend(img, 1, MPI_CHAR, destination, 2, MPI_COMM_WORLD, &request);
-    MPI_Isend(&chunkNumber, 1, MPI_INT, destination, 3, MPI_COMM_WORLD, &request);
-}
-
 int getStart(int tasksRemaining, int chunkSize) {
     return -1;
 }
@@ -135,6 +127,14 @@ void writeImage(unsigned char *img, int w, int h) {
     fclose(f);
 }
 
+void sendWork(int chunkNumber, double xs[MAX_WIDTH_HEIGHT], double ys[MAX_WIDTH_HEIGHT], unsigned char *img, int destination) {
+    MPI_Request request;
+    MPI_Isend(xs, 1, MPI_DOUBLE, destination, 0, MPI_COMM_WORLD, &request);
+    MPI_Isend(ys, 1, MPI_DOUBLE, destination, 1, MPI_COMM_WORLD, &request);
+    MPI_Isend(img, 1, MPI_UNSIGNED_CHAR, destination, 2, MPI_COMM_WORLD, &request);
+    MPI_Isend(&chunkNumber, 1, MPI_INT, destination, 3, MPI_COMM_WORLD, &request);
+}
+
 unsigned char *createImage(State state, int argc, char *argv[]) {
     int iproc, nproc;
     int w = state.w;
@@ -181,11 +181,12 @@ unsigned char *createImage(State state, int argc, char *argv[]) {
             double newXS[MAX_WIDTH_HEIGHT], newYS[MAX_WIDTH_HEIGHT];
             unsigned char *newImg = NULL;
             if (newImg) free(newImg);
+            newImg = (unsigned char *)malloc(size);
+            
             int newChunkNumber;
-//            MPI_Recv(newXS, 1, MPI_DOUBLE, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
-//            MPI_Recv(newYS, 1, MPI_DOUBLE, status.MPI_SOURCE, 1, MPI_COMM_WORLD, &status);
-//            MPI_Recv(newImg, 1, MPI_CHAR, status.MPI_SOURCE, 2, MPI_COMM_WORLD, &status);
-            MPI_Recv(&newChunkNumber, 1, MPI_INT, MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, &status);
+            MPI_Recv(newXS, 1, MPI_DOUBLE, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
+            MPI_Recv(newYS, 1, MPI_DOUBLE, status.MPI_SOURCE, 1, MPI_COMM_WORLD, &status);
+            MPI_Recv(newImg, 1, MPI_UNSIGNED_CHAR, status.MPI_SOURCE, 2, MPI_COMM_WORLD, &status);
             MPI_Send(&chunksSent, 1, MPI_INT, status.MPI_SOURCE, STATUS_CHECK_TAG, MPI_COMM_WORLD);
             responseChunks++;
             
@@ -202,9 +203,9 @@ unsigned char *createImage(State state, int argc, char *argv[]) {
             }
         } else {
             fprintf(stderr, "%i: AWAITING WORK FROM 0\n", iproc);
-//            MPI_Recv(xs, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD, &status);
-//            MPI_Recv(ys, 1, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD, &status);
-//            MPI_Recv(img, 1, MPI_CHAR, 0, 2, MPI_COMM_WORLD, &status);
+            MPI_Recv(xs, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD, &status);
+            MPI_Recv(ys, 1, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD, &status);
+            MPI_Recv(img, 1, MPI_UNSIGNED_CHAR, 0, 2, MPI_COMM_WORLD, &status);
             MPI_Recv(&chunksSent, 1, MPI_INT, 0, 3, MPI_COMM_WORLD, &status);
             fprintf(stderr, "%i: RECEIVED WORK, CHUNK #: %i\n", iproc, chunksSent);
             
@@ -241,9 +242,9 @@ unsigned char *createImage(State state, int argc, char *argv[]) {
             }
             
             fprintf(stderr, "%i: FINSIHED WORK FOR CHUNK #: %i\n", iproc, chunksSent);
-//            MPI_Send(xs, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
-//            MPI_Send(ys, 1, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD);
-//            MPI_Send(img, 1, MPI_CHAR, 0, 2, MPI_COMM_WORLD);
+            MPI_Send(xs, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
+            MPI_Send(ys, 1, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD);
+            MPI_Send(img, 1, MPI_CHAR, 0, 2, MPI_COMM_WORLD);
             MPI_Send(&chunksSent, 1, MPI_INT, 0, 3, MPI_COMM_WORLD);
             MPI_Recv(&responseChunks, 1, MPI_INT, 0, STATUS_CHECK_TAG, MPI_COMM_WORLD, &status);
             
