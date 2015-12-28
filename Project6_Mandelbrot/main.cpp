@@ -12,13 +12,13 @@ using namespace std;
 /* MANDELBROT CONSTS */
 const int MAX_WIDTH_HEIGHT = 30000;
 const int HUE_PER_ITERATION = 5;
-const int WIDTH_HEIGHT = 1000;
-const int ZOOM = 100;
+const int WIDTH_HEIGHT = 28000;
+const int ZOOM = 1000;
 
 ////////////////////////////////////////////////////////////////////////////////
 
 /* MPI CONSTS */
-const int CHUNK_SIZE = 200;
+const int CHUNK_SIZE = 2000;
 const int CHUNK_NUMBER_TOTAL = WIDTH_HEIGHT / CHUNK_SIZE;
 const int TAG_STATUS_CHECK = 100;
 const int TAG_EARLY_TERMINATION = 99;
@@ -150,7 +150,7 @@ double createImage(State state, int argc, char *argv[], double startTime) {
     
     long long size = (long long)w*(long long)h*3;
     img = (unsigned char *)malloc(size);
-    sizeOfImg = (double)size;
+    sizeOfImg = (double)(size / CHUNK_NUMBER_TOTAL);
     
 //    fprintf(stderr, "--->>>SIZE OF IMAGE: %f\n", sizeOfImg);
     
@@ -260,10 +260,10 @@ double createImage(State state, int argc, char *argv[], double startTime) {
             }
             
             MPI_Recv(&chunksSent, 1, MPI_INT, 0, 3, MPI_COMM_WORLD, &status);
-//            fprintf(stderr, "%i: RECEIVED WORK, CHUNK #: %i\n", iproc, chunksSent);
+            fprintf(stderr, "%i: RECEIVED WORK, CHUNK #: %i\n", iproc, chunksSent);
             
-            int start = 0;
-            int end = CHUNK_SIZE;
+            int start = CHUNK_SIZE * chunksSent;
+            int end = start + CHUNK_SIZE;
             int px;
             
             for (px = start; px <= end; px++) {
@@ -287,7 +287,7 @@ double createImage(State state, int argc, char *argv[], double startTime) {
                         b = hue2rgb(h + 240);
                     }
                     
-                    long long loc = ((long long)px+(long long)py*(long long)w)*3;
+                    long long loc = ((long long)(px - start)+(long long)py*(long long)w)*3;
                     newImg[loc + 2] = (unsigned char)(r);
                     newImg[loc + 1] = (unsigned char)(g);
                     newImg[loc + 0] = (unsigned char)(b);
