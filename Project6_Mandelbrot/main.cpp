@@ -1,15 +1,3 @@
-/*
- *
- * File:            mandelbrot.cpp
- * Author:          Dany Shaanan
- * Website:         http://danyshaanan.com
- * File location:   https://github.com/danyshaanan/mandelbrot/blob/master/cpp/mandelbrot.cpp
- *
- * Created somewhen between 1999 and 2002
- * Rewritten August 2013
- *
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -26,14 +14,16 @@ const int MAX_WIDTH_HEIGHT = 30000;
 const int HUE_PER_ITERATION = 5;
 const bool DRAW_ON_KEY = true;
 const int WIDTH_HEIGHT = 1000;
-const int ZOOM = 1000;
+const int ZOOM = 5000;
 
 ////////////////////////////////////////////////////////////////////////////////
 
 /* MPI CONSTS */
 const int CHUNK_SIZE = 100;
 const int CHUNK_NUMBER_TOTAL = WIDTH_HEIGHT / CHUNK_SIZE;
-const int STATUS_CHECK_TAG = 100;
+const int TAG_STATUS_CHECK = 100;
+const int TAG_FINISHED_IMAGE = 1000;
+const int TAG_EARLY_TERMINATION = 99;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -46,8 +36,6 @@ public:
     int w;
     int h;
     State() {
-        //centerX = -.75;
-        //centerY = 0;
         centerX = -1.186340599860225;
         centerY = -0.303652988644423;
         zoom = ZOOM;
@@ -130,12 +118,18 @@ void writeImage(unsigned char *img, int w, int h) {
 }
 
 // This method sends asynchronous work requests.
-void sendWork(int chunkNumber, double xs[MAX_WIDTH_HEIGHT], double ys[MAX_WIDTH_HEIGHT], unsigned char *img, int destination) {
+void sendWork(int chunkNumber, int destination) {
     MPI_Request request;
-    MPI_Isend(xs, 1, MPI_DOUBLE, destination, 0, MPI_COMM_WORLD, &request);
-    MPI_Isend(ys, 1, MPI_DOUBLE, destination, 1, MPI_COMM_WORLD, &request);
-    MPI_Isend(&img, 1, MPI_UNSIGNED_CHAR, destination, 2, MPI_COMM_WORLD, &request);
+    int isTerminated = 0;
+    
+    MPI_Isend(&isTerminated, 1, MPI_INT, destination, TAG_EARLY_TERMINATION, MPI_COMM_WORLD, &request);
     MPI_Isend(&chunkNumber, 1, MPI_INT, destination, 3, MPI_COMM_WORLD, &request);
+}
+
+void sendTermination(int destination) {
+    MPI_Request request;
+    int isTerminated = 1;
+    MPI_Isend(&isTerminated, 1, MPI_INT, destination, TAG_EARLY_TERMINATION, MPI_COMM_WORLD, &request);
 }
 
 double createImage(State state, int argc, char *argv[], double startTime) {
@@ -144,6 +138,9 @@ double createImage(State state, int argc, char *argv[], double startTime) {
     int h = state.h;
     int chunksSent = 0;
     int responseChunks = 0;
+    double endTime = 0.0;
+    int isTerminated = 1;
+    double sizeOfImg;
     
     if (w > MAX_WIDTH_HEIGHT) w = MAX_WIDTH_HEIGHT;
     if (h > MAX_WIDTH_HEIGHT) h = MAX_WIDTH_HEIGHT;
@@ -154,9 +151,10 @@ double createImage(State state, int argc, char *argv[], double startTime) {
     if (img) free(img);
     
     long long size = (long long)w*(long long)h*3;
-//    printf("Malloc w %zu, h %zu, %zu\n", w, h, size);
     img = (unsigned char *)malloc(size);
-//    printf("malloc returned %X\n", img);
+    sizeOfImg = (double)size;
+    
+    fprintf(stderr, "--->>>SIZE OF IMAGE: %f\n", sizeOfImg);
     
     double xs[MAX_WIDTH_HEIGHT], ys[MAX_WIDTH_HEIGHT];
     
@@ -166,49 +164,60 @@ double createImage(State state, int argc, char *argv[], double startTime) {
     MPI_Comm_size(MPI_COMM_WORLD, &nproc);
     MPI_Comm_rank(MPI_COMM_WORLD, &iproc);
     
+    fprintf(stderr, "HELLO FROM iproc: %i of %i\n", iproc, nproc);
+    
     if (iproc == 0) {
         int i;
         
+        /*
+            Farm out initial workload to available nodes.
+        */
         for (i = 1; i < nproc; i++) {
             if (chunksSent < CHUNK_NUMBER_TOTAL) {
-                sendWork(chunksSent, xs, ys, img, i);
-                fprintf(stderr, "%i: WORK(%i) SENT TO: %i\n", iproc, chunksSent,i);
+                sendWork(chunksSent, i);
+//                fprintf(stderr, "%i: WORK(%i) SENT TO: %i\n", iproc, chunksSent,i);
                 chunksSent++;
+            } else {
+                sendTermination(i);
             }
         }
     }
     
+    /*
+        Repeat until all work has been 
+        assigned and finished.
+    */
     while (responseChunks < CHUNK_NUMBER_TOTAL) {
         if (iproc == 0) {
             fprintf(stderr, "%i: AWAITING RESPONSE FROM ANYSOURCE\n", iproc);
             
-            // Setup temporary variables.
-            double newXS[MAX_WIDTH_HEIGHT], newYS[MAX_WIDTH_HEIGHT];
+            // Setup temporary variables for receiving data.
             unsigned char *newImg = NULL;
             if (newImg) free(newImg);
             newImg = (unsigned char *)malloc(size);
             int nodeStartNumber;
             int nodeEndNumber;
             
-            // Wait for response from node.
-            MPI_Recv(newXS, 1, MPI_DOUBLE, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
-            MPI_Recv(newYS, 1, MPI_DOUBLE, status.MPI_SOURCE, 1, MPI_COMM_WORLD, &status);
-            MPI_Recv(&newImg, 1, MPI_UNSIGNED_CHAR, status.MPI_SOURCE, 2, MPI_COMM_WORLD, &status);
+            // Wait for response from node, then respond with work count remaining (chunksSent).
+            MPI_Recv(newImg, sizeOfImg, MPI_UNSIGNED_CHAR, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, &status);
             MPI_Recv(&nodeStartNumber, 1, MPI_INT, status.MPI_SOURCE, 3, MPI_COMM_WORLD, &status);
-            MPI_Send(&chunksSent, 1, MPI_INT, status.MPI_SOURCE, STATUS_CHECK_TAG, MPI_COMM_WORLD);
+            MPI_Send(&chunksSent, 1, MPI_INT, status.MPI_SOURCE, TAG_STATUS_CHECK, MPI_COMM_WORLD);
             
             // Received another finished chunk of the image.
             responseChunks++;
             
             fprintf(stderr, "%i: RESPONSE FROM: %i (%i/%i)\n", iproc, status.MPI_SOURCE, nodeStartNumber + 1, chunksSent);
             
+            /*
+                Update the master image.
+            */
             nodeStartNumber = nodeStartNumber * CHUNK_SIZE;
-            nodeEndNumber = nodeStartNumber + CHUNK_SIZE - 1;
+            nodeEndNumber = nodeStartNumber + CHUNK_SIZE;
             
-            // Update master 'img' variable.
+            fprintf(stderr, "%i: >>>>>>>> START: %i || END: %i <<<<<<<<\n", iproc, nodeStartNumber, nodeEndNumber);
             
             int i, j;
-            for (i = nodeStartNumber; i < nodeEndNumber; i++) {
+            for (i = nodeStartNumber; i <= nodeEndNumber; i++) {
                 for (j = 0; j < WIDTH_HEIGHT; j++) {
                     long long loc = ((long long)i+(long long)j*(long long)w)*3;
 
@@ -218,29 +227,48 @@ double createImage(State state, int argc, char *argv[], double startTime) {
                 }
             }
             
-            writeImage(img, WIDTH_HEIGHT, WIDTH_HEIGHT);
-            
-            
+            /*
+                Check whether more data chunks are left to work on.
+                This is where the the master-slave paradigm has been implemented. The
+                root process determines whether there is more work, then continues to
+                push out work as long as its available.
+            */
             if (chunksSent < CHUNK_NUMBER_TOTAL) {
-                sendWork(chunksSent, xs, ys, img, status.MPI_SOURCE);
+                sendWork(chunksSent, status.MPI_SOURCE);
                 fprintf(stderr, "%i: WORK(%i) SENT TO: %i\n", iproc, chunksSent, status.MPI_SOURCE);
                 chunksSent++;
-                
                 fprintf(stderr, "%i: CURRENT STATUS --> RESPONSE_CHUNKS: %i, CHUNKS_SENT: %i\n", iproc, responseChunks, chunksSent);
             }
         } else {
+            // Setup temporary variables for receiving data.
+            unsigned char *newImg = NULL;
+            if (newImg) free(newImg);
+            newImg = (unsigned char *)malloc(size);
+            
             fprintf(stderr, "%i: AWAITING WORK FROM 0\n", iproc);
-            MPI_Recv(xs, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD, &status);
-            MPI_Recv(ys, 1, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD, &status);
-            MPI_Recv(&img, 1, MPI_UNSIGNED_CHAR, 0, 2, MPI_COMM_WORLD, &status);
+            
+            /*
+                -- CHECK FOR EARLY TERMINATION
+                This condition comes up when there are more nodes than work to be 
+                done in the first round of work assignments.
+            */
+            if (isTerminated == 1) {
+                MPI_Recv(&isTerminated, 1, MPI_INT, 0, TAG_EARLY_TERMINATION, MPI_COMM_WORLD, &status);
+                
+                if (isTerminated == 1) {
+//                    fprintf(stderr, ">>>> %i: TERMINATING EARLY\n", iproc);
+                    break;
+                }
+            }
+            
             MPI_Recv(&chunksSent, 1, MPI_INT, 0, 3, MPI_COMM_WORLD, &status);
-            fprintf(stderr, "%i: RECEIVED WORK, CHUNK #: %i\n", iproc, chunksSent);
+//            fprintf(stderr, "%i: RECEIVED WORK, CHUNK #: %i\n", iproc, chunksSent);
             
             int start = chunksSent * CHUNK_SIZE;
             int end = start + CHUNK_SIZE;
             int px;
             
-            for (px = start; px < end; px++) {
+            for (px = start; px <= end; px++) {
                 xs[px] = (px - w/2)/state.zoom + state.centerX;
             }
             
@@ -249,7 +277,7 @@ double createImage(State state, int argc, char *argv[], double startTime) {
                 ys[py] = (py - h/2)/state.zoom + state.centerY;
             }
             
-            for (px = start; px < end; px++) {
+            for (px = start; px <= end; px++) {
                 for (int py = 0; py < WIDTH_HEIGHT; py++) {
                     r = g = b = 0;
                     float iterations = iterationsToEscape(xs[px], ys[py], state.maxIterations);
@@ -270,37 +298,39 @@ double createImage(State state, int argc, char *argv[], double startTime) {
             
             fprintf(stderr, "%i: FINISHED WORK FOR CHUNK #: %i\n", iproc, chunksSent);
             
-            MPI_Send(xs, 1, MPI_DOUBLE, 0, 0, MPI_COMM_WORLD);
-            MPI_Send(ys, 1, MPI_DOUBLE, 0, 1, MPI_COMM_WORLD);
-            MPI_Send(&img, 1, MPI_UNSIGNED_CHAR, 0, 2, MPI_COMM_WORLD);
+            MPI_Send(img, sizeOfImg, MPI_UNSIGNED_CHAR, 0, 2, MPI_COMM_WORLD);
             MPI_Send(&chunksSent, 1, MPI_INT, 0, 3, MPI_COMM_WORLD);
-            MPI_Recv(&responseChunks, 1, MPI_INT, 0, STATUS_CHECK_TAG, MPI_COMM_WORLD, &status);
+            MPI_Recv(&responseChunks, 1, MPI_INT, 0, TAG_STATUS_CHECK, MPI_COMM_WORLD, &status);
             
             fprintf(stderr, "%i: ---> RESPONSE CHUNK RECEIVED: %i, %i\n", iproc, responseChunks, CHUNK_NUMBER_TOTAL);
         }
     }
     
-    fprintf(stderr, "%i: EXECUTION COMPLETE, EXITING!\n", iproc);
+    // Get the final endTime.
+    if (iproc == 0) {
+        endTime = When();
+        fprintf(stderr, "%i: -------- FINISHED IMAGE CALCULATION, WRITING TO DISK (endTime: %f) --------\n", iproc, endTime);
+        writeImage(img, WIDTH_HEIGHT, WIDTH_HEIGHT);
+    }
+    
+    fprintf(stderr, "%i: ------------------------------ EXITING PROGRAM ------------------------------\n", iproc);
     
     MPI_Finalize();
     
     fprintf(stderr, "%i: ------------------------------ RETURNING! ------------------------------\n", iproc);
     
     if (iproc == 0) {
-        double endTime = When();
-        writeImage(img, WIDTH_HEIGHT, WIDTH_HEIGHT);
-        return endTime - startTime;
+        double executionTime = endTime - startTime;
+        return executionTime;
     }
     
-    return -startTime;
+    return -1;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 double draw(State state, int argc, char *argv[]) {
     double startTime = When();
-    double endTime = createImage(state, argc, argv, startTime);
-    
-    return endTime - startTime;
+    return createImage(state, argc, argv, startTime);
 }
 
 int main(int argc, char *argv[]) {
