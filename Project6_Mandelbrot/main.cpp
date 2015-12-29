@@ -18,7 +18,7 @@ const int ZOOM = 1000;
 ////////////////////////////////////////////////////////////////////////////////
 
 /* MPI CONSTS */
-const int CHUNK_SIZE = 2000;
+const int CHUNK_SIZE = 700;
 const int CHUNK_NUMBER_TOTAL = WIDTH_HEIGHT / CHUNK_SIZE;
 const int TAG_STATUS_CHECK = 100;
 const int TAG_EARLY_TERMINATION = 99;
@@ -130,12 +130,13 @@ void sendTermination(int destination) {
     MPI_Isend(&isTerminated, 1, MPI_INT, destination, TAG_EARLY_TERMINATION, MPI_COMM_WORLD, &request);
 }
 
-double createImage(State state, int argc, char *argv[], double startTime) {
+double createImage(State state, int argc, char *argv[]) {
     int iproc, nproc;
     int w = state.w;
     int h = state.h;
     int chunksSent = 0;
     int responseChunks = 0;
+    double startTime = 0.0;
     double endTime = 0.0;
     int isTerminated = 1;
     long double sizeOfImg;
@@ -152,8 +153,6 @@ double createImage(State state, int argc, char *argv[], double startTime) {
     img = (unsigned char *)malloc(size);
     sizeOfImg = (double)(size / CHUNK_NUMBER_TOTAL);
     
-//    fprintf(stderr, "--->>>SIZE OF IMAGE: %f\n", sizeOfImg);
-    
     double xs[MAX_WIDTH_HEIGHT], ys[MAX_WIDTH_HEIGHT];
     
     MPI_Status status;
@@ -162,7 +161,7 @@ double createImage(State state, int argc, char *argv[], double startTime) {
     MPI_Comm_size(MPI_COMM_WORLD, &nproc);
     MPI_Comm_rank(MPI_COMM_WORLD, &iproc);
     
-//    fprintf(stderr, "HELLO FROM iproc: %i of %i\n", iproc, nproc);
+    startTime = When();
     
     if (iproc == 0) {
         int i;
@@ -173,7 +172,6 @@ double createImage(State state, int argc, char *argv[], double startTime) {
         for (i = 1; i < nproc; i++) {
             if (chunksSent < CHUNK_NUMBER_TOTAL) {
                 sendWork(chunksSent, i);
-//                fprintf(stderr, "%i: WORK(%i) SENT TO: %i\n", iproc, chunksSent,i);
                 chunksSent++;
             } else {
                 sendTermination(i);
@@ -187,8 +185,6 @@ double createImage(State state, int argc, char *argv[], double startTime) {
     */
     while (responseChunks < CHUNK_NUMBER_TOTAL) {
         if (iproc == 0) {
-//            fprintf(stderr, "%i: AWAITING RESPONSE FROM ANYSOURCE\n", iproc);
-            
             // Setup temporary variables for receiving data.
             unsigned char *newImg = NULL;
             if (newImg) free(newImg);
@@ -203,8 +199,6 @@ double createImage(State state, int argc, char *argv[], double startTime) {
             
             // Received another finished chunk of the image.
             responseChunks++;
-            
-//            fprintf(stderr, "%i: RESPONSE FROM: %i (%i/%i)\n", iproc, status.MPI_SOURCE, nodeStartNumber + 1, chunksSent);
             
             /*
                 Update the master image.
@@ -233,17 +227,13 @@ double createImage(State state, int argc, char *argv[], double startTime) {
             */
             if (chunksSent < CHUNK_NUMBER_TOTAL) {
                 sendWork(chunksSent, status.MPI_SOURCE);
-//                fprintf(stderr, "%i: WORK(%i) SENT TO: %i\n", iproc, chunksSent, status.MPI_SOURCE);
                 chunksSent++;
-//                fprintf(stderr, "%i: CURRENT STATUS --> RESPONSE_CHUNKS: %i, CHUNKS_SENT: %i\n", iproc, responseChunks, chunksSent);
             }
         } else {
-            // Setup temporary variables for receiving data.
+            // Setup temporary image variable for receiving data.
             unsigned char *newImg = NULL;
             if (newImg) free(newImg);
             newImg = (unsigned char *)malloc(sizeOfImg);
-            
-//            fprintf(stderr, "%i: AWAITING WORK FROM 0\n", iproc);
             
             /*
                 -- CHECK FOR EARLY TERMINATION
@@ -254,13 +244,11 @@ double createImage(State state, int argc, char *argv[], double startTime) {
                 MPI_Recv(&isTerminated, 1, MPI_INT, 0, TAG_EARLY_TERMINATION, MPI_COMM_WORLD, &status);
                 
                 if (isTerminated == 1) {
-//                    fprintf(stderr, ">>>> %i: TERMINATING EARLY\n", iproc);
                     break;
                 }
             }
             
             MPI_Recv(&chunksSent, 1, MPI_INT, 0, 3, MPI_COMM_WORLD, &status);
-            fprintf(stderr, "%i: RECEIVED WORK, CHUNK #: %i\n", iproc, chunksSent);
             
             int start = CHUNK_SIZE * chunksSent;
             int end = start + CHUNK_SIZE;
@@ -293,29 +281,19 @@ double createImage(State state, int argc, char *argv[], double startTime) {
                     newImg[loc + 0] = (unsigned char)(b);
                 }
             }
-            
-//            fprintf(stderr, "%i: FINISHED WORK FOR CHUNK #: %i\n", iproc, chunksSent);
-            
             MPI_Send(newImg, sizeOfImg, MPI_UNSIGNED_CHAR, 0, 2, MPI_COMM_WORLD);
             MPI_Send(&chunksSent, 1, MPI_INT, 0, 3, MPI_COMM_WORLD);
             MPI_Recv(&responseChunks, 1, MPI_INT, 0, TAG_STATUS_CHECK, MPI_COMM_WORLD, &status);
-            
-//            fprintf(stderr, "%i: ---> RESPONSE CHUNK RECEIVED: %i, %i\n", iproc, responseChunks, CHUNK_NUMBER_TOTAL);
         }
     }
     
     // Get the final endTime.
     if (iproc == 0) {
         endTime = When();
-//        fprintf(stderr, "%i: -------- FINISHED IMAGE CALCULATION, WRITING TO DISK (endTime: %f) --------\n", iproc, endTime);
         writeImage(img, WIDTH_HEIGHT, WIDTH_HEIGHT);
     }
     
-//    fprintf(stderr, "%i: ------------------------------ EXITING PROGRAM ------------------------------\n", iproc);
-    
     MPI_Finalize();
-    
-    fprintf(stderr, "%i: ------------------------------ RETURNING! ------------------------------\n", iproc);
     
     if (iproc == 0) {
         double executionTime = endTime - startTime;
@@ -327,8 +305,7 @@ double createImage(State state, int argc, char *argv[], double startTime) {
 
 ////////////////////////////////////////////////////////////////////////////////
 double draw(State state, int argc, char *argv[]) {
-    double startTime = When();
-    return createImage(state, argc, argv, startTime);
+    return createImage(state, argc, argv);
 }
 
 int main(int argc, char *argv[]) {
